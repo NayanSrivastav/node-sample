@@ -1,0 +1,53 @@
+variables:
+   MAVEN_OPTS: "-Dhttps.protocols=TLSv1.2 -Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=WARN -Dorg.slf4j.simpleLogger.showDateTime=true -Djava.awt.headless=true"
+   MAVEN_CLI_OPTS: "--batch-mode --errors --fail-at-end --show-version -DinstallAtEnd=true -DdeployAtEnd=true"
+
+   CI_SETTINGS: '.ci-settings.xml'
+
+   APP_NAME: 'teams-integrator'
+
+   DOCKER_HOST: tcp://docker:2375
+   APP_PORT: 3000
+
+image: node:18.6.0-buster
+
+cache:
+  key: "$CI_JOB_NAME"
+  paths:
+    - .m2/repository
+    - node_modules/
+
+stages:
+   - build
+   - deploy
+
+build:service:
+  stage: build
+  services:
+    - docker:dind
+  script:
+    - >
+      apt-get update && apt-get install -y netcat;
+      npm install;
+      npm run start &
+      until nc -vz localhost $APP_PORT; do sleep 1; done;
+  artifacts:
+    untracked: true
+    when: on_success
+    expire_in: "1 week"
+
+deploy:jdk11:
+  stage: deploy
+  dependencies:
+    - "build:service"
+  image: maven:3-jdk-11
+  services:
+    - docker:dind
+  script:
+    - >
+      if [ ! -f $CI_SETTINGS ]; then
+        echo "$CI_SETTINGS is missing";
+      else
+        mvn clean install -s $CI_SETTINGS
+        mvn $MAVEN_CLI_OPTS -Dmaven.test.skip=true deploy -s $CI_SETTINGS
+      fi
